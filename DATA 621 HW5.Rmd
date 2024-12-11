@@ -1,0 +1,296 @@
+---
+title: ' DATA 621 - HW #5 '
+author: "Angel Gallardo, Shamecca Marshall"
+date: "2024-12-10"
+output: 
+  html_document:
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+    toc: true
+    number_section: false
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    df_print: paged
+---
+
+
+
+
+## Objective
+
+In this homework assignment, you will explore, analyze and model a data set containing information on
+approximately 12,000 commercially available wines. The variables are mostly related to the chemical properties of
+the wine being sold. The response variable is the number of sample cases of wine that were purchased by wine
+distribution companies after sampling a wine. These cases would be used to provide tasting samples to
+restaurants and wine stores around the United States. The more sample cases purchased, the more likely is a
+wine to be sold at a high end restaurant. A large wine manufacturer is studying the data in order to predict the
+number of wine cases ordered based upon the wine characteristics. If the wine manufacturer can predict the
+number of cases, then that manufacturer will be able to adjust their wine offering to maximize sales.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment=NA, message=FALSE, warning=FALSE)
+library(dplyr)
+library(tidyr)
+library(naniar)
+library(ggplot2)
+library(GGally)
+library(ggcorrplot)
+library(reshape2)
+library(MASS)
+library(pscl)
+```
+
+## Data Exploration
+
+```{r message=FALSE, warning=FALSE}
+training <-read.csv("https://raw.githubusercontent.com/Angelogallardo05/Data-621-HW5/refs/heads/main/wine-training-data.csv")
+evaluation <-read.csv("https://raw.githubusercontent.com/Angelogallardo05/Data-621-HW5/refs/heads/main/wine-evaluation-data.csv")
+
+
+```
+
+
+
+
+```{r}
+glimpse(training)
+```
+
+
+```{r}
+glimpse(evaluation)
+```
+Some variables have missing values, and the target variable, STARS, represents categorical ratings with values ranging from 1 to 4.
+
+```{r}
+summary(training)
+```
+
+
+The STARS column has the most significant amount of missing data, with 3359 missing entries, which may impact the analysis of wine ratings.ResidualSugar, Chlorides, FreeSulfurDioxide, and TotalSulfurDioxide, have missing data ranging from 616 to 682.
+```{r}
+
+colSums(is.na(training))
+
+gg_miss_var(training)
+```
+
+The results indicate that the TARGET variable has a mean value of 3.029 with a standard deviation of 1.926, suggesting a relatively moderate spread across its categories, ranging from 0 to 8. For the FixedAcidity variable, the mean is 7.076 with a standard deviation of 6.318, implying considerable variability in the levels of acidity across the dataset.
+```{r}
+
+training %>%
+  summarise(across(where(is.numeric), list(mean = ~mean(., na.rm = TRUE), 
+                                           sd = ~sd(., na.rm = TRUE),
+                                           min = ~min(., na.rm = TRUE), 
+                                           max = ~max(., na.rm = TRUE))))
+
+```
+
+Many variables, such as "Alcohol," "FixedAcidity," and "Density," are approximately normally distributed, while others like "STARS" and "TARGET" have skewed distributions with distinct peaks
+```{r}
+
+
+training %>%
+  select_if(is.numeric) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = Value)) +
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.7) +
+  facet_wrap(~Variable, scales = "free") +
+  theme_minimal()
+
+```
+ Variables like ResidualSugar, TotalSulfurDioxide, and VolatileAcidity exhibit significant outliers and skewness, which could impact model performance. Transformations or robust methods may be necessary to address these issues before using these variables in regression models.
+```{r}
+training %>%
+  dplyr::select(where(is.numeric)) %>%   
+  dplyr::select(-INDEX) %>%              
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = Variable, y = Value)) +
+  geom_boxplot(fill = "lightblue", color = "black", alpha = 0.7) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+```{r}
+training %>%
+  dplyr::select(STARS, LabelAppeal, TARGET) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = Value, fill = Value)) +
+  geom_bar(alpha = 0.7) +
+  facet_wrap(~Variable, scales = "free") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.position = "none"
+  )
+
+```
+
+
+
+
+Most variables have weak correlations with each other, though some, like "VolatileAcidity" and "FixedAcidity," show slight positive correlations.
+```{r}
+
+
+numeric_data <- training %>% dplyr::select(where(is.numeric))
+
+
+cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
+
+
+ggcorrplot(cor_matrix, 
+           method = "circle", 
+           type = "lower", 
+           lab = TRUE, 
+           lab_size = 3, 
+           colors = c("blue", "white", "red"),
+           title = "Correlation Matrix")
+
+```
+
+"CitricAcid" and "FixedAcidity" show a higher proportion of zeros compared to other variables. Variables like "Alcohol" and "pH" have negligible or no zeros, suggesting different patterns in the data.
+```{r}
+
+zero_counts <- colSums(numeric_data == 0)
+prop_zeros <- zero_counts / nrow(numeric_data)
+barplot(prop_zeros, 
+        las = 2, 
+        main = "Proportion of Zeros in Variables", 
+        col = "skyblue")
+```
+
+
+## Data preperation
+
+
+Change the ratings and indexes variables to factors
+
+```{r}
+
+
+
+fill_missing_values <- function(data) {
+
+  
+  data <- data %>%
+    mutate(
+      STARS = factor(STARS, levels = c(1, 2, 3, 4), ordered = TRUE),
+      AcidIndex = factor(AcidIndex),
+      LabelAppeal = factor(LabelAppeal)
+    )
+  
+  
+  data <- data %>%
+    mutate(across(where(is.numeric) & !starts_with("STARS"), 
+                  ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+  
+  
+  data$TARGET <- as.numeric(data$TARGET)  # Change to character if needed (or numeric)
+
+  
+  data <- data %>% filter(!is.na(STARS))
+  
+  return(data)
+}
+
+training <- fill_missing_values(training)
+evaluation <- fill_missing_values(evaluation)
+
+
+```
+
+
+
+```{r}
+colSums(is.na(training))
+```
+
+
+
+
+
+
+
+
+
+
+## Build Models
+
+
+
+#Poisson mode will all variables except INDEX
+```{r}
+cleaned_data <- training %>%
+  filter(!is.na(TARGET), TARGET >= 0)
+
+
+poisson_model <- glm(TARGET ~ Alcohol + Sulphates + pH + Density + FixedAcidity + 
+                     VolatileAcidity + CitricAcid + ResidualSugar + Chlorides + 
+                     FreeSulfurDioxide + TotalSulfurDioxide + LabelAppeal + 
+                     AcidIndex + STARS, 
+                     family = poisson(), data = cleaned_data)
+
+
+summary(poisson_model)
+```
+
+
+
+The dispersion parameter for your Poisson regression model is 0.31.Since the value is significantly less than 1, this indicates that the data is underdispersed, suggesting that a Poisson model might not be the best fit.
+```{r}
+
+dispersion_poisson <- sum(residuals(poisson_model, type = "pearson")^2) / df.residual(poisson_model)
+dispersion_poisson
+```
+
+
+Poisson model with significant variables
+```{r}
+poisson_model2 <- glm(TARGET ~ Alcohol + Sulphates + pH + Density + FixedAcidity, 
+                     family = poisson(), data = cleaned_data)
+
+
+summary(poisson_model2)
+```
+
+dispersion parameter still less than 1
+```{r}
+poisson_model2 <- sum(residuals(poisson_model2, type = "pearson")^2) / df.residual(poisson_model2)
+poisson_model2
+```
+
+
+
+
+
+Large Theta suggests overDispursion
+```{r}
+nb_model <- glm.nb(TARGET ~ Alcohol + Sulphates + pH + Density + FixedAcidity, data = training)
+
+
+summary(nb_model)
+```
+
+
+
+
+
+
+Poisson Model appears to be the best model, even though overdispersion was present. 
+```{r}
+AIC(poisson_model,  nb_model)
+```
+
+
+
+
+
+
+## Select Models
