@@ -3,8 +3,6 @@ title: " DATA 621 - HW #5 "
 author: "Angel Gallardo, Shamecca Marshall"
 date: "2024-12-10"
 output:
-  pdf_document:
-    toc: true
   html_document:
     code_folding: hide
     theme: cosmo
@@ -15,6 +13,8 @@ output:
       collapsed: true
       smooth_scroll: true
     df_print: paged
+  pdf_document:
+    toc: true
 ---
 
 ```{r setup, include=FALSE, echo = FALSE, warning = FALSE, message = FALSE}
@@ -326,10 +326,31 @@ The MICE package implements a method where each incomplete variable is imputed u
 
 As noted by [Marshall et al. (2010)](https://stefvanbuuren.name/fimd/sec-pmm.html), a simulation study on skewed data concluded that predictive mean matching "may be the preferred approach provided that less than 50% of the cases have missing data." This reinforces the validity of using PMM for our dataset, ensuring that the imputation process reflects the true variability and distribution of the data while minimizing bias.
 
+```{r}
+sum(is.na(wine_train))
+sum(is.na(wine_eval))
+```
+
+```{r Imputing the missing data from MICE, include = FALSE}
+temp_train <- mice(wine_train,m=4,maxit=5,meth='pmm',seed=500)
+temp_eval <- mice(wine_eval,m=4,maxit=5,meth='pmm',seed=500)
+```
+
+```{r, echo = FALSE}
+wine_train <- mice::complete(temp_train,1)
+wine_eval <- mice::complete(temp_eval,1)
+```
+
+```{r, echo = FALSE}
+mice::densityplot(temp_train)
+```
+**Figure 8: Density Plots for Variables with Missing Data**  
+The density plots show the comparison of distributions between non-missing data (blue lines) and imputed data (red lines) for variables with missing values. The imputed data were generated using multiple imputations, with the number of imputations set to 4. The close alignment between the red and blue lines indicates that the distributions of the imputed data closely match those of the non-missing data, which is desirable. If significant discrepancies were observed, alternative imputation methods would need to be considered to improve the imputation quality.
 
 ### Split Data Into Testing and Training
 
-The dataset was divided into training and testing subsets, with 70% allocated for training and 30% for testing. The first row represents the split for the testing data, while the second row corresponds to the training data. The initial two rows pertain to the original dataset, whereas the last two rows represent the dataset with imputed missing values.
+The dataset was divided into training and evaluation subsets, with 8200 observations allocated to the training subset (`wine_train`) and 5390 observations to the evaluation subset (`wine_eval`). These values reflect the original dataset. A similar division was applied to the dataset with imputed missing values, maintaining the same number of observations in `wine_train` and `wine_eval`.
+
 
 ```{r }
 set.seed(123)
@@ -440,7 +461,6 @@ sumary(step_aic_poisson_modified)
 
 step_aic_poisson_modified_predictions <- predict.glm(step_aic_poisson_modified, modified_test, type = "response")
 
-tracker <- update_tracker("Step-AIC Pois. w/ Modified Data", modified_test$TARGET, step_aic_poisson_modified_predictions, step_aic_poisson_modified)
 ```
 
 ### Negative Binomial Models
